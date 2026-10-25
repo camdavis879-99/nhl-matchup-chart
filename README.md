@@ -1,19 +1,31 @@
-# NHL Matchup Chart (auto-refreshing)
+# NHL + NFL Matchup Chart (auto-refreshing)
 
-A daily NHL matchup chart that rebuilds itself every morning and
-publishes to GitHub Pages. One card per game, in puck-drop order:
-offense vs. defense bar pairs with league ranks, starting goalies
-with BACKUP flags, stars-out lines, and FanDuel spreads and totals
-(lines only, no prices).
+A daily matchup chart that rebuilds itself every morning and
+publishes to GitHub Pages. NHL cards, one per game in puck-drop
+order: offense vs. defense bar pairs with league ranks, starting
+goalies with BACKUP flags and season save % + record, stars-out
+lines, FanDuel spreads and totals (lines only, no prices), last-10
+form, and home/away scoring splits. Below that, the current NFL
+week with records and odds, plus a short section on which bet types
+pay sportsbooks the most.
+
+Team names are always full names on every card, never city-only:
+several cities have both NHL and NFL teams (Dallas, Pittsburgh,
+Detroit, Chicago, Nashville, Miami, Minnesota), so "Dallas" alone
+would be ambiguous.
 
 ## How it updates
 
 The `daily` workflow runs every day at 15:00 UTC (8:00 AM Phoenix
 time, before the day's games). It runs `nhl_daily.py` to fetch that
-day's slate, renders `index.html` with `render.py`, and deploys it
-to GitHub Pages. The published link then shows the new slate with
-no manual step. Scheduled GitHub runs can lag a little, and the
-workflow can also be run by hand from the Actions tab.
+day's slate, `enrich.py` to add full team names, last-10 form,
+home/away splits, and goalie season stats, `nfl.py` to fetch the
+current NFL week from ESPN, then renders `index.html` with
+`render.py`, and deploys it to GitHub Pages. The published link
+then shows the new slate with no manual step. Scheduled GitHub runs
+can lag a little, and the workflow can also be run by hand from the
+Actions tab. The enrich and NFL steps never fail the build: if a
+fetch fails, the page renders with whatever data is available.
 
 ## Files
 
@@ -22,7 +34,20 @@ workflow can also be run by hand from the Actions tab.
   prints the text report and writes `today.json`. Python standard
   library only. This is a copy of the script used for the daily
   chat report; keep the two copies in sync when either changes.
-- `render.py`: turns `today.json` into a self-contained `index.html`.
+  This copy is intentionally NOT modified by the analytics work;
+  enrichment lives in `enrich.py` so the core script stays in sync.
+- `enrich.py`: adds full team names, last-10 form, home/away
+  scoring splits, and starting-goalie season save % + record to
+  `today.json`, from public api-web.nhle.com endpoints. Stdlib
+  only. Never fails the build.
+- `nfl.py`: fetches the current NFL week (schedule, records, odds)
+  from ESPN's public scoreboard API and writes `nfl.json`. Stdlib
+  only. NFL odds are ESPN's listed provider (currently DraftKings),
+  NOT FanDuel, and the page labels them as such. If ESPN posts no
+  odds for a game, the page says so instead of guessing. No NCAA
+  content.
+- `render.py`: turns `today.json` (plus `nfl.json` when present)
+  into a self-contained `index.html`.
 - `.github/workflows/daily.yml`: the schedule, build, and deploy.
 
 ## One-time setup
