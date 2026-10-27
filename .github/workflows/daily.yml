@@ -2,7 +2,7 @@ name: Daily NHL matchup chart
 
 on:
   schedule:
-    - cron: "0 15 * * *"
+    - cron: "0 12 * * *"
   workflow_dispatch:
 
 permissions:
