@@ -5,6 +5,9 @@ Usage: python3 render.py [today.json] [dist/index.html] [nfl.json]
 Defaults: today.json in the current directory, dist/index.html, and
 nfl.json in the current directory when present (NFL section omitted
 when it is absent). NHL FanDuel odds show lines only, never prices.
+The Model block shows vig-free implied probabilities and edges derived
+from moneylines, never the raw moneyline prices themselves, and never
+anything about the user's own betting (no bankroll, stakes, or picks).
 """
 import html
 import json
@@ -85,12 +88,68 @@ def card(g):
             f'{html.escape(h)} {html.escape(o["home_spread"])} &middot; '
             f'O/U {html.escape(o["total"])}</div>'
         )
+    mb = model_block(g)
+    if mb:
+        parts.append(mb)
     stars = g.get("stars_out") or []
     if stars:
         items = "".join(f"<div>{html.escape(s)}</div>" for s in stars)
         parts.append(f'<div class="stars"><div class="stars-title">Stars out</div>{items}</div>')
     parts.append("</section>")
     return "\n".join(parts)
+
+
+def model_block(g):
+    """Render the Model block for one NHL game card, or "" when absent.
+
+    Every metric shows "n/a" when its source failed, never a guess.
+    Market edge shows "no line" when no FanDuel moneyline pair was
+    available. Full team names throughout, never city-only.
+    """
+    m = g.get("model")
+    if not m:
+        return ""
+
+    def num(v, fmt):
+        return fmt.format(v) if v is not None else "n/a"
+
+    def team_line(name, xgf, xga, pp, pk, rest, edge):
+        edge_txt = f"{edge:+.1f} pts" if edge is not None else "n/a"
+        return (
+            f"{html.escape(name)} — xGF {num(xgf, '{:.2f}')} / xGA {num(xga, '{:.2f}')}"
+            f" · PP {num(pp, '{:.1%}')} · PK {num(pk, '{:.1%}')}"
+            f" · {html.escape(rest) if rest else 'n/a'}"
+            f" · Goalie edge {edge_txt}"
+        )
+
+    lines = ['<div class="model"><div class="model-title">Model</div>']
+    lines.append(
+        f"<div>{team_line(g['away_name'], m['away_xgf'], m['away_xga'], m['away_pp'], m['away_pk'], m['away_rest'], m['away_goalie_edge'])}</div>"
+    )
+    lines.append(
+        f"<div>{team_line(g['home_name'], m['home_xgf'], m['home_xga'], m['home_pp'], m['home_pk'], m['home_rest'], m['home_goalie_edge'])}</div>"
+    )
+    if m.get("away_prob") is not None and m.get("home_prob") is not None:
+        win = (
+            f"Win: {html.escape(g['away_name'])} {m['away_prob']:.1%}"
+            f" ({num(m.get('away_lam'), '{:.1f}')} exp. goals)"
+            f" · {html.escape(g['home_name'])} {m['home_prob']:.1%}"
+            f" ({num(m.get('home_lam'), '{:.1f}')} exp. goals)"
+        )
+        if m.get("away_market") is not None and m.get("away_edge") is not None:
+            win += (
+                f" · Market: {html.escape(g['away_name'])} {m['away_market']:.1%}"
+                f" (edge {m['away_edge']:+.1f} pts)"
+                f" · {html.escape(g['home_name'])} {m['home_market']:.1%}"
+                f" (edge {m['home_edge']:+.1f} pts)"
+            )
+        else:
+            win += " · Market edge: no line"
+        lines.append(f"<div>{win}</div>")
+    else:
+        lines.append("<div>Model win % unavailable (missing goals data)</div>")
+    lines.append("</div>")
+    return "\n".join(lines)
 
 
 def nfl_card(g):
@@ -201,6 +260,8 @@ h1 {{ margin: 0 0 4px; font-size: 28px; }}
 .bet-types p.honest {{ color: var(--text); }}
 .backup {{ display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: #fef3c7; color: #92400e; margin-left: 4px; }}
 .odds {{ margin-top: 10px; display: inline-block; font-size: 14px; font-weight: 600; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); }}
+.model {{ margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.6; }}
+.model-title {{ font-weight: 600; color: var(--muted); }}
 .stars {{ margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.5; }}
 .stars-title {{ font-weight: 600; color: var(--muted); }}
 footer {{ margin-top: 28px; color: var(--muted); font-size: 13px; line-height: 1.5; }}
@@ -221,6 +282,7 @@ footer {{ margin-top: 28px; color: var(--muted); font-size: 13px; line-height: 1
 <p>Goalie labels come from DailyFaceoff: confirmed or projected is their call, reported means listed without a flag, and BACKUP means the starter is not the team's usual No. 1.</p>
 <p>The FanDuel row on each card shows the spread, the puck line, and O/U, the total goals line. Lines only, no prices.</p>
 <p>Last 10 is the regular-season record over the last 10 finals. Away and Home splits are season-to-date goals per game in that venue. Goalie SV% and record are season totals.</p>
+<p>Model: xGF/xGA are MoneyPuck all-situations expected goals per game; PP/PK are season-to-date; rest is days since the last game. Win % is a Poisson model on venue-split goals with ties split, and edge is the model minus the vig-free FanDuel moneyline probability. Goalie edge is the starter's save % minus the opposing starter's, shown for context and not folded into the model. "No line" means no FanDuel moneyline was available.</p>
 </div>
 <div class="grid">
 {cards}

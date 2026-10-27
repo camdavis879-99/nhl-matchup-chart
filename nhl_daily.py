@@ -529,6 +529,55 @@ def main():
         dbg("parlay odds resolved teams:", sorted(odds.keys()))
     except Exception as _e:
         dbg("parlay odds failed:", type(_e).__name__, str(_e)[:200])
+    # FanDuel moneylines, in a SEPARATE call from the spreads/totals
+    # above, so a failure here can never cost us the spreads. ParlayAPI
+    # mirrors The Odds API market keys, where "h2h" is the moneyline
+    # market; if that key is wrong or the market is absent, this block
+    # just leaves ML unset and the Model edge shows "no line". ML is
+    # only recorded for a team that already has a spread entry, so a
+    # partial moneyline can never make the article fallback below skip
+    # a game.
+    try:
+        _ml_key = os.environ.get("PARLAY_API_KEY")
+        if not _ml_key:
+            sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/bin")
+            from dynamic_credentials import add_surrogate_to_request, read_json_response
+        _ml_req = urllib.request.Request(
+            "https://parlay-api.com/v1/sports/icehockey_nhl/odds"
+            "?regions=us&markets=h2h&bookmakers=fanduel")
+        if _ml_key:
+            _ml_req.add_header("X-API-Key", _ml_key)
+            with urllib.request.build_opener(_NoRedirect()).open(_ml_req, timeout=30) as _resp:
+                _ml_events = json.load(_resp)
+        else:
+            add_surrogate_to_request(_ml_req, "custom.parlay-api", allowed_hosts=["parlay-api.com"])
+            with urllib.request.build_opener(_NoRedirect()).open(_ml_req, timeout=30) as _resp:
+                _ml_events = read_json_response(_resp)
+        if isinstance(_ml_events, dict):
+            _ml_events = _ml_events.get("data", [])
+        for _ev in (_ml_events or []):
+            _a = name_to_abbr_pre.get(_norm(_ev.get("away_team", "")))
+            _h = name_to_abbr_pre.get(_norm(_ev.get("home_team", "")))
+            if not _a or not _h or (_a, _h) not in _today_pairs:
+                continue
+            _books = _ev.get("bookmakers", []) or []
+            _fd = next((b for b in _books if b.get("key") == "fanduel"), None)
+            if not _fd:
+                continue
+            _mk = {m.get("key"): m for m in (_fd.get("markets", []) or [])}
+            _h2h = _mk.get("h2h")
+            if not _h2h:
+                continue
+            _ml_out = {name_to_abbr_pre.get(_norm(o.get("name", ""))): o
+                       for o in (_h2h.get("outcomes", []) or [])}
+            if _a not in _ml_out or _h not in _ml_out:
+                continue
+            for _abbr3 in (_a, _h):
+                if _abbr3 in odds:
+                    odds[_abbr3]["ml"] = _sgn(str(_ml_out[_abbr3].get("price")))
+        dbg("parlay ml resolved teams:", sorted(a for a in odds if "ml" in odds[a]))
+    except Exception as _e:
+        dbg("parlay ml failed:", type(_e).__name__, str(_e)[:200])
     for _dt, _g in games:
         if _g.get("awayTeam", {}).get("abbrev") in odds and _g.get("homeTeam", {}).get("abbrev") in odds:
             continue
@@ -663,6 +712,10 @@ def main():
                 "away_spread": a_odd["spread"], "away_spread_price": a_odd["spread_price"],
                 "home_spread": h_odd["spread"], "home_spread_price": h_odd["spread_price"],
                 "total": a_odd["total"], "over": a_odd["over"], "under": a_odd["under"],
+                # Moneylines only as a pair: the edge needs both teams
+                # to remove the vig, so a lone ML is dropped, not shown.
+                "away_ml": a_odd.get("ml") if (a_odd.get("ml") and h_odd.get("ml")) else None,
+                "home_ml": h_odd.get("ml") if (a_odd.get("ml") and h_odd.get("ml")) else None,
             } if (a_odd and h_odd) else None,
         })
     lines.append("")
