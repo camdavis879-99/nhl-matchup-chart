@@ -25,6 +25,12 @@ Adds, per game:
   FanDuel moneyline after removing the vig. See model_prob() for the
   full formula. Any metric whose source failed is None, never guessed;
   a game with no FanDuel moneyline gets no market edge ("no line").
+- SOG watch (per game): each team's top two shooters by shots on goal
+  per game (minimum 5 games played, from the same club-stats fetch as
+  the goalie lines), plus the shots-against per game the opposing team
+  allows (NHL stats API team summary). Stored as away_sog/home_sog
+  lists and away_opp_sa_gp/home_opp_sa_gp; a side with no data renders
+  "n/a" rather than a guess.
 
 Stdlib only. Sources are all public api-web.nhle.com endpoints, the
 same ones nhl_daily.py uses (urllib follows the /now redirects), plus
@@ -170,17 +176,21 @@ def team_analytics(abbr, date_s):
 
 
 def goalie_stats(abbr):
-    """Return (lines, save_pcts).
+    """Return (lines, save_pcts, shooters).
 
     lines maps normalized goalie name -> 'SV% .925 · 1-1-0' season line;
     save_pcts maps the same keys -> numeric save percentage (0.925).
     Both fall back to last name only when it is unique on the team.
+    shooters is the team's top two shooters by shots on goal per game
+    (minimum 5 games played; falls back to top two by total shots when
+    nobody qualifies), each a dict with name, gp, shots, sog_gp.
     """
     data = fetch_json(f"{NHL}/club-stats/{abbr}/now")
     out = {}
     svs = {}
     last_names = {}
     last_svs = {}
+    shooters = []
     if data:
         for gl in data.get("goalies", []):
             fn = (gl.get("firstName") or {}).get("default", "")
@@ -197,6 +207,23 @@ def goalie_stats(abbr):
             if isinstance(sv, (int, float)):
                 svs[norm(name)] = sv
                 last_svs.setdefault(norm(ln), []).append(sv)
+        cands = []
+        for s in data.get("skaters", []):
+            fn = (s.get("firstName") or {}).get("default", "")
+            ln = (s.get("lastName") or {}).get("default", "")
+            name = f"{fn} {ln}".strip()
+            gp = s.get("gamesPlayed")
+            shots = s.get("shots")
+            if not name or not isinstance(gp, (int, float)) or not isinstance(shots, (int, float)) or gp <= 0:
+                continue
+            cands.append((name, gp, shots))
+        qualified = [c for c in cands if c[1] >= 5]
+        if qualified:
+            ranked = sorted(qualified, key=lambda c: c[2] / c[1], reverse=True)
+        else:
+            ranked = sorted(cands, key=lambda c: c[2], reverse=True)
+        for name, gp, shots in ranked[:2]:
+            shooters.append({"name": name, "gp": int(gp), "shots": int(shots), "sog_gp": round(shots / gp, 2)})
     # Fall back to last name only when it is unique on the team.
     for ln, lines in last_names.items():
         if len(lines) == 1 and ln not in out:
@@ -204,7 +231,7 @@ def goalie_stats(abbr):
     for ln, vals in last_svs.items():
         if len(vals) == 1 and ln not in svs:
             svs[ln] = vals[0]
-    return out, svs
+    return out, svs, shooters
 
 
 def goalie_name(line):
@@ -235,7 +262,7 @@ def season_ids(date_s):
 
 
 def team_special_teams(name_to_abbr, nhl_season):
-    """Return {abbr: (power_play_pct, penalty_kill_pct)} as 0-1 floats.
+    """Return {abbr: (power_play_pct, penalty_kill_pct, shots_against_pg)}.
 
     One keyless call to the NHL stats API team summary for the given
     season id (e.g. 20262027). Rows carry teamFullName but no
@@ -258,9 +285,11 @@ def team_special_teams(name_to_abbr, nhl_season):
             continue
         pp = row.get("powerPlayPct")
         pk = row.get("penaltyKillPct")
+        sa = row.get("shotsAgainstPerGame")
         out[abbr] = (
             pp if isinstance(pp, (int, float)) else None,
             pk if isinstance(pk, (int, float)) else None,
+            sa if isinstance(sa, (int, float)) else None,
         )
     return out
 
@@ -516,13 +545,14 @@ def main():
     analytics = {}
     stats = {}
     svs = {}
+    shooters = {}
     for abbr in teams:
         try:
             analytics[abbr] = team_analytics(abbr, date_s)
         except Exception as e:
             print(f"enrich: analytics failed for {abbr}: {e}", file=sys.stderr)
         try:
-            stats[abbr], svs[abbr] = goalie_stats(abbr)
+            stats[abbr], svs[abbr], shooters[abbr] = goalie_stats(abbr)
         except Exception as e:
             print(f"enrich: goalie stats failed for {abbr}: {e}", file=sys.stderr)
 
@@ -566,13 +596,21 @@ def main():
             if name and abbr in stats:
                 line = stats[abbr].get(norm(name))
             g[f"{side}_goalie_stats"] = line
+        if a in shooters:
+            g["away_sog"] = shooters[a]
+        if h in shooters:
+            g["home_sog"] = shooters[h]
+        if h in special:
+            g["away_opp_sa_gp"] = special[h][2]
+        if a in special:
+            g["home_opp_sa_gp"] = special[a][2]
         g["model"] = build_model(g, a, h, analytics, special, xg, svs)
 
     tmp = src + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, src)
-    print(f"Enriched {src} with {len(games)} games (full names, form, splits, goalie stats).")
+    print(f"Enriched {src} with {len(games)} games (full names, form, splits, goalie stats, SOG watch).")
     return 0
 
 

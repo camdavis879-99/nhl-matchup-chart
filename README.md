@@ -5,7 +5,9 @@ publishes to GitHub Pages. NHL cards, one per game in puck-drop
 order: offense vs. defense bar pairs with league ranks, starting
 goalies with BACKUP flags and season save % + record, stars-out
 lines, FanDuel spreads and totals (lines only, no prices), last-10
-form, and home/away scoring splits. Below that, the current NFL
+form, home/away scoring splits, and a SOG watch line per game (each
+team's top two shooters by shots on goal per game, plus the shots per
+game the opposing team allows). Below that, the current NFL
 week with records and odds, plus a short section on which bet types
 pay sportsbooks the most.
 

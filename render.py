@@ -8,6 +8,8 @@ when it is absent). NHL FanDuel odds show lines only, never prices.
 The Model block shows vig-free implied probabilities and edges derived
 from moneylines, never the raw moneyline prices themselves, and never
 anything about the user's own betting (no bankroll, stakes, or picks).
+The SOG watch block shows each team's top two shooters by shots on goal
+per game and the shots per game the opposing team allows.
 """
 import html
 import json
@@ -91,6 +93,9 @@ def card(g):
     mb = model_block(g)
     if mb:
         parts.append(mb)
+    sb = sog_block(g)
+    if sb:
+        parts.append(sb)
     stars = g.get("stars_out") or []
     if stars:
         items = "".join(f"<div>{html.escape(s)}</div>" for s in stars)
@@ -148,6 +153,36 @@ def model_block(g):
         lines.append(f"<div>{win}</div>")
     else:
         lines.append("<div>Model win % unavailable (missing goals data)</div>")
+    lines.append("</div>")
+    return "\n".join(lines)
+
+
+def sog_block(g):
+    """Render the SOG watch block for one NHL game card, or "" when absent.
+
+    Each side lists the team's top two shooters by shots on goal per
+    game, plus the shots per game the opposing team allows. A side
+    with no shooter data shows "n/a", never a guess. Full team names
+    throughout, never city-only.
+    """
+    away = g.get("away_sog") or []
+    home = g.get("home_sog") or []
+    if not away and not home:
+        return ""
+
+    def side_line(name, shooters, opp_sa):
+        if shooters:
+            bits = " · ".join(
+                f"{html.escape(s['name'])} {s['sog_gp']:.1f}/GP" for s in shooters
+            )
+        else:
+            bits = "n/a"
+        sa = f" (opp allows {opp_sa:.1f} SA/GP)" if opp_sa is not None else ""
+        return f"{html.escape(name)}: {bits}{sa}"
+
+    lines = ['<div class="sog"><div class="sog-title">SOG watch</div>']
+    lines.append(f"<div>{side_line(g['away_name'], away, g.get('away_opp_sa_gp'))}</div>")
+    lines.append(f"<div>{side_line(g['home_name'], home, g.get('home_opp_sa_gp'))}</div>")
     lines.append("</div>")
     return "\n".join(lines)
 
@@ -262,6 +297,8 @@ h1 {{ margin: 0 0 4px; font-size: 28px; }}
 .odds {{ margin-top: 10px; display: inline-block; font-size: 14px; font-weight: 600; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); }}
 .model {{ margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.6; }}
 .model-title {{ font-weight: 600; color: var(--muted); }}
+.sog {{ margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.6; }}
+.sog-title {{ font-weight: 600; color: var(--muted); }}
 .stars {{ margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.5; }}
 .stars-title {{ font-weight: 600; color: var(--muted); }}
 footer {{ margin-top: 28px; color: var(--muted); font-size: 13px; line-height: 1.5; }}
@@ -283,6 +320,7 @@ footer {{ margin-top: 28px; color: var(--muted); font-size: 13px; line-height: 1
 <p>The FanDuel row on each card shows the spread, the puck line, and O/U, the total goals line. Lines only, no prices.</p>
 <p>Last 10 is the regular-season record over the last 10 finals. Away and Home splits are season-to-date goals per game in that venue. Goalie SV% and record are season totals.</p>
 <p>Model: xGF/xGA are MoneyPuck all-situations expected goals per game; PP/PK are season-to-date; rest is days since the last game. Win % is a Poisson model on venue-split goals with ties split, and edge is the model minus the vig-free FanDuel moneyline probability. Goalie edge is the starter's save % minus the opposing starter's, shown for context and not folded into the model. "No line" means no FanDuel moneyline was available.</p>
+<p>SOG watch lists each team's top two shooters by shots on goal per game (minimum 5 games played) and the shots per game the opposing team allows.</p>
 </div>
 <div class="grid">
 {cards}
